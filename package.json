@@ -1,0 +1,41 @@
+{
+  "name": "mason-parser",
+  "version": "1.0.3",
+  "description": "A lightweight, high-performance Markdown Structured Object Notation (MSON) parser and stringifier.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup index.ts --format cjs,esm --dts --clean",
+    "test": "echo \"Error: no test specified\" && exit 0"
+  },
+  "keywords": [
+    "mason",
+    "mson",
+    "markdown",
+    "json",
+    "parser",
+    "serializer",
+    "yaml",
+    "toml",
+    "configuration",
+    "llm",
+    "token-saving"
+  ],
+  "author": "Lemone Academy",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "tsup": "^8.0.2",
+    "typescript": "^5.3.3"
+  }
+}
