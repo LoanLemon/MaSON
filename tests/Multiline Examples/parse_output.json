@@ -1,0 +1,9 @@
+{
+  "CodeSandbox": {
+    "script": "```javascript\nfunction calculateTotal(price, tax) {\n  return price * (1 + tax);\n}\n```",
+    "scriptRaw": "function calculateTotal(price, tax) {\n  return price * (1 + tax);\n}",
+    "literalText": "`code` (outputs: `code`)",
+    "rawCode": "hello",
+    "embeddedBacktick": "`hello`"
+  }
+}

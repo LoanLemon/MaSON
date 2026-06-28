@@ -1,0 +1,14 @@
+# CodeSandbox
+script: `"```javascript
+function calculateTotal(price, tax) {
+  return price * (1 + tax);
+}
+```"`
+scriptRaw: ```javascript
+function calculateTotal(price, tax) {
+  return price * (1 + tax);
+}
+```
+literalText: `` `code` (outputs: `code`) ``
+rawCode: ```hello```
+embeddedBacktick: `` `hello` ``

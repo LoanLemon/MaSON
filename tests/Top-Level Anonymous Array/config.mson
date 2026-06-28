@@ -1,0 +1,11 @@
+[]
+
+## 
+name: Pizza Margherita
+price: 12.50
+vegetarian: true
+
+## 
+name: Pepperoni Pizza
+price: 14.00
+vegetarian: false

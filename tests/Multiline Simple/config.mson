@@ -1,0 +1,12 @@
+# Product
+name: Pepperoni Pizza
+price: 14.00
+vegetarian: `
+false
+`
+description: `
+Our classic thin crust pizza topped with:
+- Premium pepperoni slices
+- Mozzarella cheese
+- Fresh tomato sauce
+`

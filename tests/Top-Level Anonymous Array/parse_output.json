@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Pizza Margherita",
+    "price": 12.5,
+    "vegetarian": true
+  },
+  {
+    "name": "Pepperoni Pizza",
+    "price": 14,
+    "vegetarian": false
+  }
+]

@@ -1,0 +1,14 @@
+title: My Cool App
+version: 1.0.3
+debugMode: false
+maxRetries: 5
+timeoutMs: 1500.50
+
+# Servers
+* https://api.prod.coolapp.com
+* https://api.backup.coolapp.com
+* https://api.dev.coolapp.com
+
+# Admins
+* lemone.academy.26@gmail.com
+* support@coolapp.com

@@ -1,0 +1,34 @@
+{
+  "GameSettings": {
+    "difficulty": "hard",
+    "soundVolume": 0.85,
+    "MapWorld": {
+      "name": "Whispering Forest",
+      "seed": 998244353,
+      "width": 2048,
+      "height": 1024,
+      "SpawnPoint": {
+        "x": 102,
+        "y": 45,
+        "z": 12
+      },
+      "QuestActive": {
+        "id": "Q-409",
+        "name": "Purify the Sacred Tree",
+        "progress": 0.45,
+        "completed": false
+      }
+    },
+    "PlayerStats": {
+      "health": 100,
+      "mana": 45,
+      "xpMultiplier": 1.5,
+      "Inventory": [
+        "Iron Sword",
+        "Wooden Shield",
+        "Healing Potion",
+        "Teleport Scroll"
+      ]
+    }
+  }
+}

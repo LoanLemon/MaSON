@@ -1,0 +1,26 @@
+{
+  "LoggingEvent": {
+    "eventId": "LOG-88492",
+    "createdDate": "2026-06-27T12:00:00Z",
+    "active": true,
+    "severity": 4,
+    "PayloadMixedList": [
+      42,
+      "100",
+      false,
+      null,
+      "2026-06-27",
+      "2026-06-27",
+      {
+        "x": 1,
+        "y": 2,
+        "z": 33
+      }
+    ],
+    "Metadata": {
+      "authorName": "Lemone Academy",
+      "rawZip": "16801",
+      "implicitZip": 16801
+    }
+  }
+}

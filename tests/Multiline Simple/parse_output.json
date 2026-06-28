@@ -1,0 +1,8 @@
+{
+  "Product": {
+    "name": "Pepperoni Pizza",
+    "price": 14,
+    "vegetarian": false,
+    "description": "Our classic thin crust pizza topped with:\n- Premium pepperoni slices\n- Mozzarella cheese\n- Fresh tomato sauce"
+  }
+}
