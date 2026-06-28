@@ -1,7 +1,7 @@
 # mason-parser
 
 > Markdown Structured Object Notation (MaSON) — A human-centric serialization format bridging natural markdown visual hierarchy and structured JSON.
-
+> Read the official IETF Internet-Draft specification: draft-lee-mason-00.txt
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![NPM Version](https://img.shields.io/npm/v/mason-parser.svg)](https://www.npmjs.com/package/mason-parser)
 

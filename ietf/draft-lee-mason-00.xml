@@ -1,0 +1,430 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- name="GENERATOR" content="github.com/mmarkdown/mmark Mmark Markdown Processor - mmark.miek.nl" -->
+<rfc version="3" ipr="trust200902" docName="draft-lee-mason-00" submissionType="IETF" category="std" xml:lang="en" xmlns:xi="http://www.w3.org/2001/XInclude" indexInclude="true">
+
+<front>
+<title abbrev="MaSON">Markdown Structured Object Notation (MaSON)</title><seriesInfo value="draft-lee-mason-00" stream="IETF" status="standard" name="Internet-Draft"></seriesInfo>
+<author initials="D." surname="Lee" fullname="Dustin Lee"><organization>Independent</organization><address><postal><street></street>
+</postal><email>dlee@lemone.online</email>
+<uri>https://github.com/LoanLemon/MaSON</uri>
+</address></author><date year="2026" month="June" day="28"></date>
+<area>Applications</area>
+<workgroup></workgroup>
+
+<abstract>
+<t>This document defines MaSON (Markdown Structured Object Notation), a lightweight data serialization format that maps standard Markdown syntax trees into structured key-value objects. MaSON is designed to maximize human readability and LLM token efficiency by eliminating bracket-based nesting and strict indentation rules.</t>
+</abstract>
+
+</front>
+
+<middle>
+
+<section anchor="introduction"><name>Introduction</name>
+<t>Data serialization formats play a critical role in configuration, distributed systems, and application state management. Traditional formats such as JSON (RFC 8259) offer deterministic parsing but present syntax overhead (e.g., explicit braces, quotation marks, and strict trailing comma rules) that impairs manual, human-authored editing. Alternative human-readable formats, notably YAML, resolve bracket verbosity but introduce structural fragility through strict multi-space indentation constraints.</t>
+<t>Concurrently, the rise of Large Language Models (LLMs) has introduced a new serialization constraint: token optimization. Repetitive structural characters in JSON and YAML consume valuable context window resources when data structures are injected into generative AI system prompts.</t>
+<t>This document defines MaSON (Markdown Structured Object Notation), a format designed to bridge human readability, machine parsing efficiency, and token density. MaSON repurposes ubiquitous Markdown (RFC 7763) layout paradigms—specifically headers and list delimiters—to establish object hierarchies without syntax-heavy nesting markers.</t>
+
+<section anchor="requirements-language"><name>Requirements Language</name>
+<t>The key words &quot;MUST&quot;, &quot;MUST NOT&quot;, &quot;REQUIRED&quot;, &quot;SHALL&quot;, &quot;SHALL NOT&quot;, &quot;SHOULD&quot;, &quot;SHOULD NOT&quot;, &quot;RECOMMENDED&quot;, &quot;NOT RECOMMENDED&quot;, &quot;MAY&quot;, and &quot;OPTIONAL&quot; in this document are to be interpreted as described in BCP 14 <xref target="RFC2119"></xref> <xref target="RFC8174"></xref> when, and only when, they appear in all capitals, as shown here.</t>
+</section>
+
+<section anchor="semantic-reinterpretation-of-markdown"><name>Semantic Reinterpretation of Markdown</name>
+<t>This specification intentionally assigns structured, machine-readable data serialization semantics to Markdown heading syntax beyond the purely presentational or structural document behaviors defined in RFC 7763. While a MaSON document remains syntactically valid Markdown, its document tree is explicitly mapped to associative data structures rather than an HTML visual layout.</t>
+</section>
+</section>
+
+<section anchor="architectural-goals-and-core-paradigms"><name>Architectural Goals and Core Paradigms</name>
+<t>The design of MaSON is governed by the following core architectural principles:</t>
+
+<ul spacing="compact">
+<li><strong>Visual Ubiquity:</strong> The serialization layout MUST closely mimic standard human-readable Markdown documentation. A non-technical user should be capable of modifying a MaSON configuration file using a basic text editor without violating language grammar rules.</li>
+<li><strong>Indentation Independence:</strong> To prevent layout-based parsing errors common in formats like YAML, MaSON schemas MUST NOT rely on white-space or multi-space indentation depth to determine object or array scope boundaries.</li>
+<li><strong>Token Efficiency:</strong> By removing structural punctuation, quotes, and structural padding, MaSON text structures seek to minimize the character-to-data footprint relative to equivalent JSON payloads, optimizing it for text-based LLM processing and prompt engineering workflows.</li>
+<li><strong>Deterministic Bidirectional Equivalence:</strong> MaSON must support deterministic round-tripping. Serializing an active JSON object structure into MaSON text and immediately parsing it back into memory MUST yield an identical object topology.</li>
+</ul>
+</section>
+
+<section anchor="syntax"><name>Syntax Specification</name>
+
+<section anchor="document-structure-encoding-and-comments"><name>Document Structure, Encoding, and Comments</name>
+<t>MaSON documents MUST be encoded using UTF-8. Line endings MUST be represented by a single Carriage Return and Line Feed (CRLF) sequence or a single Line Feed (LF) character. The parser MUST normalize line endings to a single uniform delimiter prior to processing.</t>
+<t>The formal grammar rules specified via ABNF in Section {{formal-grammar}} describe the format's lexical structure using 8-bit octets. When parsing multi-byte sequences representing valid UTF-8 encoded Unicode scalar values outside the standard ASCII range, the parser MUST treat any continuous block of non-ASCII multibyte octets as a valid literal character sequence within a header key or property value stream.</t>
+<t>Lines where the first non-whitespace character consists of a double forward-slash sequence (&quot;//&quot;) MUST be treated as comment streams. Parsers MUST ignore comments and blank whitespace lines during lexical token processing.</t>
+</section>
+
+<section anchor="structural-hierarchy-and-headers"><name>Structural Hierarchy and Headers</name>
+<t>Object nesting depth and scope are defined structurally by Markdown heading tokens.</t>
+<t>The document root represents an implicit top-level associative array (object). A heading line beginning with one or more '#' characters followed by exactly one space character (0x20) MUST introduce a new nested object scope.</t>
+<t>The number of '#' characters determines the absolute nesting depth:</t>
+
+<ul spacing="compact">
+<li>A single '#' denotes a direct child key of the root object.</li>
+<li>Subsequent heading blocks with additional '#' characters (e.g., '##', '###') denote deeply nested child keys under the most recently declared parent object of a higher logical tier (fewer '#' characters).</li>
+<li>A structural transition to a heading with fewer or equal '#' characters MUST cleanly close out all preceding active scopes up to that nesting depth.</li>
+</ul>
+</section>
+
+<section anchor="key-value-pairs-and-escaping"><name>Key-Value Pairs and Escaping</name>
+<t>Properties within a structural scope MUST be declared as a single-line key-value pair separated by a colon character (0x3A).</t>
+
+<ul spacing="compact">
+<li>Inline property keys MUST precede the colon separator and MUST NOT contain whitespace characters or control flags.</li>
+<li>Conversely, a header key declared via heading tokens MAY contain internal horizontal whitespace characters, which MUST be preserved by the parser.</li>
+<li>Optional space characters MAY follow the colon separator before the value payload begins.</li>
+<li>Values MUST be treated as strings by default unless they conform to primitive data types defined in Section {{primitives}}.</li>
+</ul>
+<t>To permit structural characters inside property values or header keys, the backslash character (&quot;\&quot;, 0x5C) MUST act as an escape character. The sequence &quot;:&quot; explicitly escapes a colon separator, &quot;#&quot; escapes a header token, and &quot;\&quot; escapes the backslash itself. Parsers MUST resolve these escape sequences to their literal equivalents during token assembly.</t>
+</section>
+
+<section anchor="lists-as-arrays"><name>Lists as Arrays</name>
+<t>Sequential lines beginning with an asterisk ('*', 0x2A) or a hyphen ('-', 0x2D) followed by exactly one space character (0x20) MUST be parsed as sequential array items.</t>
+
+<ul spacing="compact">
+<li>If a list sequence occurs directly below an object key declaration without an explicit assignment value, the key's value MUST be instantiated as an ordered array containing those list elements.</li>
+<li>List elements containing key-value colon separators SHOULD NOT be treated as objects unless an explicit object array suffix is supplied.</li>
+</ul>
+</section>
+
+<section anchor="array-suffixes"><name>Explicit Array Suffixes</name>
+<t>To prevent structural ambiguity when constructing arrays of complex objects, a header key MAY append an explicit array suffix consisting of opening and closing square brackets (&quot;[]&quot;, 0x5B 0x5D).</t>
+<t>When an explicit array suffix is encountered:</t>
+
+<ul spacing="compact">
+<li>The parser MUST treat the declared key name (omitting the &quot;[]&quot; suffix) as an ordered collection array target.</li>
+<li>If an explicit array header contains no nested contents or children, the structure MUST resolve cleanly to an empty array literal (&quot;[]&quot;) rather than an unassigned key or object state.</li>
+<li>Immediate child headers encountered beneath an explicit array declaration ('[]') establish element boundaries but do not themselves become object keys in the mapped memory state.</li>
+<li>If an inline key-value property is declared directly beneath an explicit array header without an intervening child sub-header, the parser MUST instantly instantiate an implicit, unnamed object element container inside that array to isolate and store those properties safely.</li>
+</ul>
+</section>
+
+<section anchor="formal-grammar"><name>Formal Grammar (ABNF)</name>
+<t>The syntax of a MaSON document is defined formally using Augmented Backus-Naur Form (ABNF) as specified in RFC 5234 <xref target="RFC5234"></xref>. The ABNF defines the strict lexical token boundaries of a MaSON stream. The semantic construction of hierarchical object depths, structural array appending, and state stack validation based on these tokens MUST be governed exclusively by the processing rules defined in Section {{processing}}.</t>
+
+<sourcecode type="abnf"><![CDATA[mason-doc      = *(section / kv-pair / array-list / empty-line / comment)
+
+section        = header-marker SP header-key [array-suffix] CRLF
+header-marker  = 1*6"#"
+array-suffix   = "[]"
+
+kv-pair        = inline-key ":" [SP] value CRLF
+
+inline-key     = 1*(ALPHA / DIGIT / "-" / "_")
+header-key     = inline-key *(1*SP inline-key)
+
+value          = *(escaped-char / literal-char / utf8-scalar)
+escaped-char   = "\" ( ":" / "#" / "\" )
+literal-char   = %x20-5B / %x5D-7E ; Printable ASCII VCHAR and SP, omitting \
+utf8-scalar    = %x80-FF ; Raw tracking slice for multi-byte UTF-8 streams
+
+array-list     = 1*(list-marker SP value CRLF)
+list-marker    = "*" / "-"
+
+comment        = *SP "//" *(literal-char / utf8-scalar) CRLF
+empty-line     = *SP CRLF
+
+number         = ["-"] 1*DIGIT ["." 1*DIGIT]
+
+]]></sourcecode>
+</section>
+</section>
+
+<section anchor="processing"><name>Processing and Parsing Behavior</name>
+
+<section anchor="structural-scope-stack-operations"><name>Structural Scope Stack Operations</name>
+<t>A MaSON parser MUST maintain an internal state stack to keep track of the active structural hierarchy while traversing a document linearly.</t>
+
+<ul spacing="compact">
+<li>Upon encountering a header with an absolute depth of N (where N is the count of '#' characters), the parser MUST examine the current depth of the state stack.</li>
+<li>If N is exactly equal to the current stack depth plus one, the new object scope MUST be pushed onto the stack as a nested child of the active object.</li>
+<li>If N is less than or equal to the current stack depth, the parser MUST repeatedly pop scopes off the stack until the stack depth equals N minus one, at which point the new object scope is instantiated and pushed.</li>
+</ul>
+</section>
+
+<section anchor="primitives"><name>Primitive Value Coercion Rules</name>
+<t>Values extracted from key-value properties or array lists MUST be evaluated against literal structural patterns to determine if they undergo data type coercion:</t>
+
+<ul spacing="compact">
+<li><strong>Null Coercion:</strong> The exact character sequence &quot;null&quot; (case-sensitive, matching ASCII 0x6E 0x75 0x6C 0x6C) MUST be coerced to a native null reference.</li>
+<li><strong>Boolean Coercion:</strong> The exact character sequences &quot;true&quot; or &quot;false&quot; (case-sensitive, matching ASCII 0x74 0x72 0x75 0x65 and 0x66 0x61 0x6C 0x73 0x65) MUST be coerced to their respective native boolean definitions.</li>
+<li><strong>Numeric Coercion:</strong> Character streams matching the <tt>number</tt> rule defined in Section {{formal-grammar}} MUST be coerced directly to native floating-point or integer numeric signatures within the processing environment. Any token sequence containing characters deviating from that structure MUST NOT undergo numeric coercion and falls back cleanly to a string representation.</li>
+</ul>
+</section>
+
+<section anchor="text-and-scope-trimming"><name>Text and Scope Trimming</name>
+<t>Parsers MUST strip leading and trailing horizontal whitespace (spaces 0x20 and horizontal tabs 0x09) from both property keys and property values prior to evaluation or storage. Internal whitespace within a value payload MUST be preserved explicitly.</t>
+</section>
+
+<section anchor="duplicate-handling"><name>Duplicate Member Handling</name>
+<t>If a document contains duplicate inline property keys within the same active object scope, the parser MUST enforce a last-assignment-wins strategy, where the final parsed assignment value overwrites any preceding declaration.</t>
+<t>Conversely, if a nested sub-header configuration path matches a path that has been declared previously in the document stream, the parser MUST execute a deep recursive merge of the subsequent properties into the existing structure rather than overwriting or purging the original object hierarchy. If a collision occurs between identical inline scalar keys inside those recursively merged header scopes, the final assignment declaration takes precedence.</t>
+</section>
+</section>
+
+<section anchor="security-considerations"><name>Security Considerations</name>
+
+<section anchor="resource-exhaustion-and-stack-overflow"><name>Resource Exhaustion and Stack Overflow</name>
+<t>Because MaSON determines structural depth and nesting scope by the linear accumulation of heading tokens (the '#' character), naive implementations relying on recursive parsing strategies or unbounded internal state stacks are vulnerable to stack overflow or out-of-memory errors.</t>
+<t>An attacker could craft a malicious MaSON document consisting of thousands of deeply nested sequential headers (e.g., repeating incrementing sequences of '#', '##', '###', etc.) or exceptionally long continuous lines of a single token archetype. Implementations MUST enforce an upper limit on maximum nesting depth (a RECOMMENDED default limit of 32 levels) and maximum single-line buffer lengths to guarantee deterministic termination and mitigate Denial of Service (DoS) vectors.</t>
+</section>
+
+<section anchor="type-coercion-and-key-injection"><name>Type Coercion and Key Injection</name>
+<t>As outlined in Section {{syntax}}, parsers are expected to automatically coerce primitive string sequences matching boolean or numeric literal patterns into native equivalents. Implementations MUST validate that incoming token sequences do not trigger prototype pollution or unexpected type mutation behaviors within the execution environment.</t>
+<t>Furthermore, because MaSON documents eliminate explicit enclosing string delimiters for property values, applications consuming data from unvetted MaSON inputs MUST validate that payload string values do not inadvertently mirror structural control characters (such as colons or heading markers) that could be re-serialized to inject malicious keys into a downstream application state.</t>
+</section>
+
+<section anchor="embedded-content-and-code-block-safety"><name>Embedded Content and Code Block Safety</name>
+<t>MaSON implementations handling complex inline values or embedded code blocks MUST treat the underlying isolated content strictly as static string fragments. Parsers MUST NOT evaluate or execute code blocks embedded within a document stream. Applications displaying or executing data extracted from a MaSON payload MUST apply contextual sanitization to prevent downstream Cross-Site Scripting (XSS) or command injection vulnerabilities.</t>
+</section>
+</section>
+
+<section anchor="iana-considerations"><name>IANA Considerations</name>
+<t>This document requests the registration of a new media type and file extension in accordance with the procedures defined in RFC 6838 <xref target="RFC6838"></xref>.</t>
+
+<section anchor="media-type-registration-application-mason"><name>Media Type Registration: application/mason</name>
+<t>Type name: application
+Subtype name: mason
+Required parameters: None
+Optional parameters: charset (The value MUST be &quot;utf-8&quot;)
+Encoding considerations: binary (UTF-8 encoded text)
+Security considerations: See Section 5 of this document.
+Interoperability considerations: MaSON is designed for cross-platform data interchange across server, browser, and language-model environments.
+Published specification: This document.
+Applications that use this media type: General-purpose software systems, system orchestration configuration tooling, and large language model prompt frameworks.</t>
+</section>
+
+<section anchor="file-extension-registration"><name>File Extension Registration</name>
+<t>The standard file extensions designated for MaSON structured data documents are &quot;.mason&quot; and &quot;.mson&quot;.</t>
+</section>
+</section>
+
+</middle>
+
+<back>
+<references><name>Normative References</name>
+<xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.2119.xml"/>
+<xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.5234.xml"/>
+<xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.6838.xml"/>
+<xi:include href="https://bib.ietf.org/public/rfc/bibxml/reference.RFC.8174.xml"/>
+</references>
+
+<section anchor="references"><name>References</name>
+
+<section anchor="normative-references"><name>Normative References</name>
+</section>
+
+<section anchor="informative-references"><name>Informative References</name>
+</section>
+</section>
+
+<section anchor="structural-mapping-examples"><name>Structural Mapping Examples</name>
+
+<section anchor="standard-structured-object-configuration"><name>Standard Structured Object Configuration</name>
+<t>The following sample demonstrates a typical MaSON configuration input containing explicit primitives, lists, and structural scope depth nesting.</t>
+
+<sourcecode type="markdown"><![CDATA[# Server Setup
+debugMode: false
+maxRetries: 5
+
+# Servers
+* [https://api.prod.coolapp.com](https://api.prod.coolapp.com)
+* [https://api.backup.coolapp.com](https://api.backup.coolapp.com)
+
+# Database
+driver: postgres
+
+## Credentials
+user: admin
+host: localhost
+
+]]></sourcecode>
+<t>An RFC-compliant MaSON parser tracking the stack shifts and types outlined in this specification MUST map the source text above directly into the following equivalent JSON structure:</t>
+
+<sourcecode type="json"><![CDATA[{
+  "Server Setup": {
+    "debugMode": false,
+    "maxRetries": 5
+  },
+  "Servers": [
+    "[https://api.prod.coolapp.com](https://api.prod.coolapp.com)",
+    "[https://api.backup.coolapp.com](https://api.backup.coolapp.com)"
+  ],
+  "Database": {
+    "driver": "postgres",
+    "Credentials": {
+      "user": "admin",
+      "host": "localhost"
+    }
+  }
+}
+
+]]></sourcecode>
+</section>
+
+<section anchor="arrays-of-complex-objects-via-suffix-syntax"><name>Arrays of Complex Objects via Suffix Syntax</name>
+<t>The following sample illustrates the normative handling of nested object collections within sequential, recurring header declarations. Immediate sub-headers beneath an explicit array declaration ('[]') act as element boundary markers, instantiating a new object item within the collection array.</t>
+
+<sourcecode type="markdown"><![CDATA[# Cluster Infrastructure
+environment: production
+
+## Nodes[]
+
+### Node Item
+host: compute-01.local
+capacity: 64
+
+### Node Item
+host: compute-02.local
+capacity: 128
+
+]]></sourcecode>
+<t>An RFC-compliant MaSON parser tracking the active <tt>[]</tt> array scope stack MUST generate the following structure:</t>
+
+<sourcecode type="json"><![CDATA[{
+  "Cluster Infrastructure": {
+    "environment": "production",
+    "Nodes": [
+      {
+        "host": "compute-01.local",
+        "capacity": 64
+      },
+      {
+        "host": "compute-02.local",
+        "capacity": 128
+      }
+    ]
+  }
+}
+
+]]></sourcecode>
+</section>
+
+<section anchor="implicit-object-instantiation-within-array-scopes"><name>Implicit Object Instantiation within Array Scopes</name>
+<t>The following sample illustrates the parsing response when an inline key-value property sequence is introduced directly below an explicit object array header without intermediate element boundary sub-headers, mapping to the behavior defined in Section {{array-suffixes}}.</t>
+
+<sourcecode type="markdown"><![CDATA[# Users[]
+name: Alice
+age: 20
+
+]]></sourcecode>
+
+<sourcecode type="json"><![CDATA[[
+  {
+    "name": "Alice",
+    "age": 20
+  }
+]
+
+]]></sourcecode>
+</section>
+
+<section anchor="recursive-deep-merging-of-duplicate-headers"><name>Recursive Deep Merging of Duplicate Headers</name>
+<t>The following sample demonstrates how consecutive occurrences of a shared header identity path deeply combine nested property structures recursively based on the rules in Section {{duplicate-handling}}.</t>
+
+<sourcecode type="markdown"><![CDATA[# Target Object
+## Nested Child
+initial_key: true
+
+# Target Object
+## Nested Child
+appended_key: false
+
+]]></sourcecode>
+
+<sourcecode type="json"><![CDATA[{
+  "Target Object": {
+    "Nested Child": {
+      "initial_key": true,
+      "appended_key": false
+    }
+  }
+}
+
+]]></sourcecode>
+</section>
+</section>
+
+<section anchor="complex-edge-case-and-tokenization-reference"><name>Complex Edge Case and Tokenization Reference</name>
+
+<section anchor="token-and-character-density-methodology-and-comparison"><name>Token and Character Density Methodology and Comparison</name>
+<t>The structural efficiency metrics detailed below were generated empirically by processing a single, logically identical Agent Configuration payload compiled across formats and evaluated using OpenAI's production &quot;cl100k_base&quot; tokenization algorithm. The benchmark results are illustrative rather than normative.</t>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Characters</th>
+<th>Tokens (GPT-4)</th>
+<th>Overhead Reduction</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+<td>JSON</td>
+<td>194</td>
+<td>58</td>
+<td>Baseline</td>
+</tr>
+
+<tr>
+<td>YAML</td>
+<td>132</td>
+<td>44</td>
+<td>24.1%</td>
+</tr>
+
+<tr>
+<td>MaSON</td>
+<td>98</td>
+<td>31</td>
+<td>46.5%</td>
+</tr>
+</tbody>
+</table><t>In this specific benchmark, MaSON reduced token count by approximately 46.5% relative to the JSON baseline.</t>
+</section>
+
+<section anchor="edge-case-matrix"><name>Edge Case Matrix</name>
+<table>
+<thead>
+<tr>
+<th>Input Payload (MaSON)</th>
+<th>Resulting Memory State (JSON)</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+<td><tt>key: null</tt></td>
+<td><tt>{ &quot;key&quot;: null }</tt></td>
+</tr>
+
+<tr>
+<td><tt>msg: err\: failed</tt></td>
+<td><tt>{ &quot;msg&quot;: &quot;err: failed&quot; }</tt></td>
+</tr>
+
+<tr>
+<td><tt>hex: #ff0000</tt></td>
+<td><tt>{ &quot;hex&quot;: &quot;#ff0000&quot; }</tt></td>
+</tr>
+
+<tr>
+<td><tt># Empty Array[]</tt></td>
+<td><tt>[]</tt></td>
+</tr>
+</tbody>
+</table></section>
+</section>
+
+<section anchor="technical-design-rationale"><name>Technical Design Rationale</name>
+<t>The design decisions governing the assembly of MaSON are structured to address specific historical limitations encountered in standard data serialization languages:</t>
+
+<ul spacing="compact">
+<li><strong>Headings vs Indentation:</strong> Standard indentation-based layouts (such as YAML) frequently create parsing vulnerabilities across distributed application boundaries due to non-visible structural spacing variants or text translation wrapping. By shifting dependency strictly to explicit, character-anchored heading tokens (The '#' element), MaSON decouples hierarchy entirely from spatial indent levels.</li>
+<li><strong>Explicit [] Suffixing:</strong> While implicit layout scanning can determine list boundaries for primitive sequences, arrays tracking complex structures with dynamic nesting depths introduce deep tracking ambiguity. Enforcing an explicit &quot;[]&quot; suffix ensures that any multi-language compiler instantly knows the type-class of the upcoming frame tree without relying on heavy schema lookaheads.</li>
+<li><strong>Omission of Closing Enclosures:</strong> Braces, brackets, and closing lines are heavily utilized by machines to clear stack frames but represent significant token redundancy when processed by text-transformer algorithms. MaSON shifts the responsibility of stack scope tracking from closing symbols to progressive line state shifts. In the benchmark corpus described in Appendix B, this strategy reduced token counts by approximately 46.5% compared to conventional JSON structures.</li>
+</ul>
+</section>
+
+</back>
+
+</rfc>
