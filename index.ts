@@ -296,6 +296,7 @@ export function fastParseWithTrace(text: string): ParseResult {
     value: any;
     type: 'object' | 'array';
     isExplicitArray?: boolean;
+    forcedBracketType?: 'array' | 'object' | null;
   }
 
   const stack: FastStackItem[] = [];
@@ -324,6 +325,18 @@ export function fastParseWithTrace(text: string): ParseResult {
     // Skip comment lines starting with <!--
     if (firstChar === 60 /* '<' */ && rawLine.startsWith('<!--', startIdx)) {
       continue;
+    }
+
+    const trimmedLine = rawLine.trim();
+    if (trimmedLine === ']' || trimmedLine === '}') {
+      if (stack.length > 0) {
+        const active = stack[stack.length - 1];
+        if ((trimmedLine === ']' && active.forcedBracketType === 'array') ||
+            (trimmedLine === '}' && active.forcedBracketType === 'object')) {
+          stack.pop();
+          continue;
+        }
+      }
     }
 
     // Skip trailing whitespace
@@ -377,11 +390,39 @@ export function fastParseWithTrace(text: string): ParseResult {
 
       let actualHeadingName = '';
       let isExplicitArray = false;
+      let forcedBracketType: 'array' | 'object' | null = null;
 
       if (hStart <= endIdx) {
-        if (endIdx - hStart >= 1 && rawLine.charCodeAt(endIdx - 1) === 91 /* '[' */ && rawLine.charCodeAt(endIdx) === 93 /* ']' */) {
+        const lastChar = rawLine.charCodeAt(endIdx);
+        if (endIdx - hStart >= 1 && rawLine.charCodeAt(endIdx - 1) === 91 /* '[' */ && lastChar === 93 /* ']' */) {
           isExplicitArray = true;
           let hEnd = endIdx - 2;
+          while (hEnd >= hStart) {
+            const code = rawLine.charCodeAt(hEnd);
+            if (code === 32 || code === 9) {
+              hEnd--;
+            } else {
+              break;
+            }
+          }
+          actualHeadingName = hStart <= hEnd ? rawLine.slice(hStart, hEnd + 1) : '';
+        } else if (lastChar === 91 /* '[' */) {
+          isExplicitArray = true;
+          forcedBracketType = 'array';
+          let hEnd = endIdx - 1;
+          while (hEnd >= hStart) {
+            const code = rawLine.charCodeAt(hEnd);
+            if (code === 32 || code === 9) {
+              hEnd--;
+            } else {
+              break;
+            }
+          }
+          actualHeadingName = hStart <= hEnd ? rawLine.slice(hStart, hEnd + 1) : '';
+        } else if (lastChar === 123 /* '{' */) {
+          isExplicitArray = false;
+          forcedBracketType = 'object';
+          let hEnd = endIdx - 1;
           while (hEnd >= hStart) {
             const code = rawLine.charCodeAt(hEnd);
             if (code === 32 || code === 9) {
@@ -435,7 +476,8 @@ export function fastParseWithTrace(text: string): ParseResult {
         parent: activeParent,
         value: newNode,
         type: isExplicitArray ? 'array' : 'object',
-        isExplicitArray
+        isExplicitArray,
+        forcedBracketType
       });
 
       continue;
@@ -454,13 +496,26 @@ export function fastParseWithTrace(text: string): ParseResult {
       }
       const bulletValStr = bulletValIdx <= endIdx ? rawLine.slice(bulletValIdx, endIdx + 1) : '';
 
+      let shouldPopActive = false;
+      const activeItemForClosing = stack[stack.length - 1];
+      let cleanBulletValStr = bulletValStr;
+      if (activeItemForClosing) {
+        if (activeItemForClosing.forcedBracketType === 'array' && bulletValStr.endsWith(']')) {
+          cleanBulletValStr = bulletValStr.slice(0, -1).trim();
+          shouldPopActive = true;
+        } else if (activeItemForClosing.forcedBracketType === 'object' && bulletValStr.endsWith('}')) {
+          cleanBulletValStr = bulletValStr.slice(0, -1).trim();
+          shouldPopActive = true;
+        }
+      }
+
       let value: any;
-      if (bulletValStr.charCodeAt(0) === 96 /* '`' */) {
-        const multiline = parseValueWithMultiline(bulletValStr, lines, i);
+      if (cleanBulletValStr.charCodeAt(0) === 96 /* '`' */) {
+        const multiline = parseValueWithMultiline(cleanBulletValStr, lines, i);
         value = multiline.value;
         i = multiline.nextLineIndex;
       } else {
-        value = parsePrimitiveValue(bulletValStr);
+        value = parsePrimitiveValue(cleanBulletValStr);
       }
 
       if (stack.length === 0) {
@@ -469,6 +524,11 @@ export function fastParseWithTrace(text: string): ParseResult {
         }
         root._items.push(value);
         continue;
+      }
+
+      // Pop stack if parent is an array and active item is an object (so bullet belongs to containing array)
+      while (stack.length > 1 && stack[stack.length - 1].type !== 'array' && stack[stack.length - 2].type === 'array') {
+        stack.pop();
       }
 
       const activeItem = stack[stack.length - 1];
@@ -504,6 +564,11 @@ export function fastParseWithTrace(text: string): ParseResult {
       } else {
         activeItem.value.push(value);
       }
+
+      if (shouldPopActive) {
+        stack.pop();
+      }
+
       continue;
     }
 
@@ -530,7 +595,19 @@ export function fastParseWithTrace(text: string): ParseResult {
           break;
         }
       }
-      const valStr = vStart <= endIdx ? rawLine.slice(vStart, endIdx + 1) : '';
+      let valStr = vStart <= endIdx ? rawLine.slice(vStart, endIdx + 1) : '';
+
+      let shouldPopActive = false;
+      const activeItem = stack[stack.length - 1];
+      if (activeItem) {
+        if (activeItem.forcedBracketType === 'array' && valStr.endsWith(']')) {
+          valStr = valStr.slice(0, -1).trim();
+          shouldPopActive = true;
+        } else if (activeItem.forcedBracketType === 'object' && valStr.endsWith('}')) {
+          valStr = valStr.slice(0, -1).trim();
+          shouldPopActive = true;
+        }
+      }
 
       let parsedVal: any;
       if (valStr.charCodeAt(0) === 96 /* '`' */) {
@@ -546,12 +623,23 @@ export function fastParseWithTrace(text: string): ParseResult {
         continue;
       }
 
-      const activeItem = stack[stack.length - 1];
       if (activeItem.type === 'array') {
+        let lastItem = activeItem.value[activeItem.value.length - 1];
+        if (!lastItem || typeof lastItem !== 'object' || Array.isArray(lastItem)) {
+          lastItem = {};
+          activeItem.value.push(lastItem);
+        }
+        lastItem[key] = parsedVal;
+        if (shouldPopActive) {
+          stack.pop();
+        }
         continue;
       }
 
       activeItem.value[key] = parsedVal;
+      if (shouldPopActive) {
+        stack.pop();
+      }
       continue;
     }
   }
@@ -596,6 +684,7 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
     value: any;
     type: 'object' | 'array';
     isExplicitArray?: boolean;
+    forcedBracketType?: 'array' | 'object' | null;
   }
   
   const stack: StackItem[] = [];
@@ -650,6 +739,28 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
         });
       }
       continue;
+    }
+
+    const trimmedLine = rawLine.trim();
+    if (trimmedLine === ']' || trimmedLine === '}') {
+      if (stack.length > 0) {
+        const active = stack[stack.length - 1];
+        if ((trimmedLine === ']' && active.forcedBracketType === 'array') ||
+            (trimmedLine === '}' && active.forcedBracketType === 'object')) {
+          stack.pop();
+          if (!noTrace) {
+            trace.push({
+              lineNumber,
+              lineText: rawLine,
+              action: `Closed forced bracket and popped "${active.key}" from stack`,
+              stackDepth: stack.length,
+              currentStack: getStackNames(),
+              status: 'success'
+            });
+          }
+          continue;
+        }
+      }
     }
 
     // Find trailing non-whitespace index in rawLine
@@ -729,9 +840,18 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
 
       let actualHeadingName = headingName;
       let isExplicitArray = false;
+      let forcedBracketType: 'array' | 'object' | null = null;
       if (headingName.endsWith('[]')) {
         actualHeadingName = headingName.slice(0, -2).trim();
         isExplicitArray = true;
+      } else if (headingName.endsWith('[')) {
+        actualHeadingName = headingName.slice(0, -1).trim();
+        isExplicitArray = true;
+        forcedBracketType = 'array';
+      } else if (headingName.endsWith('{')) {
+        actualHeadingName = headingName.slice(0, -1).trim();
+        isExplicitArray = false;
+        forcedBracketType = 'object';
       }
 
       if (!actualHeadingName) {
@@ -815,7 +935,8 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
         parent: activeParent,
         value: newNode,
         type: isExplicitArray ? 'array' : 'object',
-        isExplicitArray
+        isExplicitArray,
+        forcedBracketType
       });
 
       continue;
@@ -833,7 +954,21 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
         }
       }
       const bulletValStr = bulletValIdx <= endIdx ? rawLine.slice(bulletValIdx, endIdx + 1) : '';
-      const { value, nextLineIndex } = parseValueWithMultiline(bulletValStr, lines, i);
+
+      let shouldPopActive = false;
+      const activeItemForClosing = stack[stack.length - 1];
+      let cleanBulletValStr = bulletValStr;
+      if (activeItemForClosing) {
+        if (activeItemForClosing.forcedBracketType === 'array' && bulletValStr.endsWith(']')) {
+          cleanBulletValStr = bulletValStr.slice(0, -1).trim();
+          shouldPopActive = true;
+        } else if (activeItemForClosing.forcedBracketType === 'object' && bulletValStr.endsWith('}')) {
+          cleanBulletValStr = bulletValStr.slice(0, -1).trim();
+          shouldPopActive = true;
+        }
+      }
+
+      const { value, nextLineIndex } = parseValueWithMultiline(cleanBulletValStr, lines, i);
       i = nextLineIndex;
 
       if (stack.length === 0) {
@@ -852,6 +987,21 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
           });
         }
         continue;
+      }
+
+      // Pop stack if parent is an array and active item is an object (so bullet belongs to containing array)
+      while (stack.length > 1 && stack[stack.length - 1].type !== 'array' && stack[stack.length - 2].type === 'array') {
+        const popped = stack.pop();
+        if (!noTrace && popped) {
+          trace.push({
+            lineNumber,
+            lineText: rawLine,
+            action: `Popped object heading "${popped.key}" from stack because parent is an Array, sibling to upcoming bullet`,
+            stackDepth: stack.length,
+            currentStack: getStackNames(),
+            status: 'info'
+          });
+        }
       }
 
       const activeItem = stack[stack.length - 1];
@@ -931,6 +1081,21 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
           });
         }
       }
+
+      if (shouldPopActive) {
+        const popped = stack.pop();
+        if (!noTrace && popped) {
+          trace.push({
+            lineNumber,
+            lineText: rawLine,
+            action: `Closed forced bracket and popped "${popped.key}" from stack`,
+            stackDepth: stack.length,
+            currentStack: getStackNames(),
+            status: 'success'
+          });
+        }
+      }
+
       continue;
     }
 
@@ -957,7 +1122,20 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
           break;
         }
       }
-      const valStr = vStart <= endIdx ? rawLine.slice(vStart, endIdx + 1) : '';
+      let valStr = vStart <= endIdx ? rawLine.slice(vStart, endIdx + 1) : '';
+
+      let shouldPopActive = false;
+      const activeItem = stack[stack.length - 1];
+      if (activeItem) {
+        if (activeItem.forcedBracketType === 'array' && valStr.endsWith(']')) {
+          valStr = valStr.slice(0, -1).trim();
+          shouldPopActive = true;
+        } else if (activeItem.forcedBracketType === 'object' && valStr.endsWith('}')) {
+          valStr = valStr.slice(0, -1).trim();
+          shouldPopActive = true;
+        }
+      }
+
       const { value: parsedVal, nextLineIndex } = parseValueWithMultiline(valStr, lines, i);
       i = nextLineIndex;
 
@@ -976,17 +1154,45 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
         continue;
       }
 
-      const activeItem = stack[stack.length - 1];
       if (activeItem.type === 'array') {
+        let lastItem = activeItem.value[activeItem.value.length - 1];
+        if (!lastItem || typeof lastItem !== 'object' || Array.isArray(lastItem)) {
+          lastItem = {};
+          activeItem.value.push(lastItem);
+          if (!noTrace) {
+            trace.push({
+              lineNumber,
+              lineText: rawLine,
+              action: `Created implicit object inside array "${activeItem.key}" to hold key "${key}"`,
+              stackDepth: stack.length,
+              currentStack: getStackNames(),
+              status: 'info'
+            });
+          }
+        }
+        lastItem[key] = parsedVal;
         if (!noTrace) {
           trace.push({
             lineNumber,
             lineText: rawLine,
-            action: `Error: Key-value "${key}" encountered inside array "${activeItem.key}"`,
+            action: `Set key "${key}" to "${parsedVal}" in implicit object inside array "${activeItem.key}"`,
             stackDepth: stack.length,
             currentStack: getStackNames(),
-            status: 'error'
+            status: 'success'
           });
+        }
+        if (shouldPopActive) {
+          stack.pop();
+          if (!noTrace) {
+            trace.push({
+              lineNumber,
+              lineText: rawLine,
+              action: `Closed forced bracket and popped "${activeItem.key}" from stack`,
+              stackDepth: stack.length,
+              currentStack: getStackNames(),
+              status: 'success'
+            });
+          }
         }
         continue;
       }
@@ -1001,6 +1207,19 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
           currentStack: getStackNames(),
           status: 'success'
         });
+      }
+      if (shouldPopActive) {
+        stack.pop();
+        if (!noTrace) {
+          trace.push({
+            lineNumber,
+            lineText: rawLine,
+            action: `Closed forced bracket and popped "${activeItem.key}" from stack`,
+            stackDepth: stack.length,
+            currentStack: getStackNames(),
+            status: 'success'
+          });
+        }
       }
       continue;
     }
@@ -1080,11 +1299,17 @@ export function stringify(obj: any, level: number = 0, parentKey?: string): stri
       itemName = itemName.charAt(0).toUpperCase() + itemName.slice(1);
     }
 
+    // Sort items so that primitive/scalars come first, and objects/arrays come last (to the bottom)
+    const primitives = obj.filter(item => typeof item !== 'object' || item === null);
+    const complex = obj.filter(item => typeof item === 'object' && item !== null);
+    const sortedItems = [...primitives, ...complex];
+
     // If it's an array of items, we represent them as bullets or subheadings
-    for (const item of obj) {
+    for (const item of sortedItems) {
       if (typeof item === 'object' && item !== null) {
         const nextLevel = level + 1;
-        output += `${hashes(nextLevel)} ${itemName}\n`;
+        const headingSuffix = Array.isArray(item) ? '[]' : '';
+        output += `${hashes(nextLevel)} ${itemName}${headingSuffix}\n`;
         const nestedString = stringify(item, nextLevel);
         if (nestedString) {
           output += nestedString;

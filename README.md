@@ -161,6 +161,7 @@ Document
 6. **Top-Level Anonymous Arrays:** To make the entire document parse as a top-level array, define `[]` on the very first non-empty line of the file. Each subsequent item header (like `##`) directly pushes a new anonymous object into this array.
 7. **Anonymous & Descriptive Heading Labels:** When defining elements of an array (explicit or top-level), heading names are fully optional. You can use empty heading lines (e.g., `## ` or `##`) or descriptive notes (e.g., `## Alice (Admin)`) without affecting the structured JSON properties.
 8. **Multiline Values:** Wrap any multi-line text block or formatted string in backticks (`` ` ``). The parser will automatically preserve formatting and newlines within the block.
+9. **Forced Brackets (`[` and `{`):** For mixed arrays or explicit containment, appending `[` or `{` to a heading forces the parsed container type to be an array or object, respectively, until a matching closing bracket (`]` or `}`) is encountered on a line by itself or at the end of a value. This isolates nested structures within mixed-type sequences.
 
 ---
 
@@ -223,6 +224,25 @@ MaSON handles backticks dynamically based on matching the count of opening and c
   literalText: `` `code` ``
   ```
   * **Behavior:** Resolves to `"`code`"`.
+
+### 6. Forced Brackets Isolation (Mixed-Type Arrays)
+* **Behavior:** When writing highly nested structures inside mixed arrays, MaSON supports forced bracket suffixes (`[` for array, `{` for object) on headings to cleanly isolate them from other list elements.
+  ```markdown
+  # MixedDataset
+  ## PayloadMixedList[]
+  ### InnerArrayForcedBrackets[
+  x: 1
+  y: 2
+  z: 33]
+
+  ### InnerObjectForcedBrackets{
+  x: 1
+  y: 2
+  z: 33}
+  * 42
+  * "100"
+  ```
+* **No Forced Brackets on JSON Stringification:** When parsing/converting from JSON back to MaSON via `stringify`, **forced brackets are never introduced**. The stringifier automatically reorders and groups array elements so that primitive/scalar types are written as simple bullet points first, and complex objects/arrays are placed last and serialized under clean heading syntax (`#` or `#[]`). This keeps the serialized MaSON files perfectly clean, standard, and easy to read without any visual bracket pollution.
 
 ---
 

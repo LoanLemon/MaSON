@@ -30,8 +30,10 @@ bullet_char          = "*" | "-" | "+" ;
 spaces               = { " " | "\t" } ;
 newline              = "\r\n" | "\n" ;
 
-heading_label        = [ explicit_array_label | literal_label ] ;
+heading_label        = [ explicit_array_label | forced_array_label | forced_object_label | literal_label ] ;
 explicit_array_label = literal_label , "[]" ;
+forced_array_label   = literal_label , "[" ;
+forced_object_label  = literal_label , "{" ;
 literal_label        = { any_character_except_brackets_or_hash } ;
 
 key                  = { any_character_except_colon_or_spaces } ;
@@ -68,6 +70,7 @@ unquoted_string      = { any_character_except_newline_and_trailing_spaces } ;
    - If a bullet (`*`, `-`, `+`) is parsed under an active heading, and the active heading is currently an empty object (`{}`), its container type is morphed to an ordered array (`[]`) and the value is pushed into it.
    - If the container already has property keys, the bullet value is instead pushed into an implicit `_items` key in that object to protect properties from silent deletion.
 6. **Explicit Array Suffix**: If a heading terminates with `[]` (e.g. `# Users[]`), it is instantly initialized as an array. Nested headings below it push new objects into this array container.
+7. **Forced Brackets**: Suffixes `[` and `{` on headings explicitly override the parsed container type to be an array or object, respectively, until a matching closing bracket (`]` or `}`) is encountered on a line by itself or at the end of a value. This isolates deeply nested structures in complex mixed-type lists.
 
 ### Stringification Rules
 - **Primitives**: Write booleans, null, and compliant numbers as-is. Wrap strings with quotes if they resemble boolean/null literals, contain a colon `:`, are empty, or contain outer spaces.
@@ -75,6 +78,7 @@ unquoted_string      = { any_character_except_newline_and_trailing_spaces } ;
 - **Arrays**:
   - Arrays of primitives: Render as bulleted lists (`* Item`) under their parent key or heading.
   - Arrays of objects: Append `[]` to the parent heading, and write child objects under singularized child headings (e.g., `# Users[]` as container, with individual entries under `## User`).
+- **Array Element Reordering & Visual Purity (No Forced Brackets)**: To maintain natural readability, the `stringify` function **never** outputs forced brackets (`[` or `{`). Instead, mixed arrays containing both primitive/scalar elements and nested complex items are automatically reordered on serialization: all primitives/scalars are sorted to the top and serialized first as bullet points under the heading, while complex objects or nested arrays are written underneath them using standard singularized headings (`#` or `#[]`). This keeps the MaSON output exceptionally clean and standard.
 
 ---
 

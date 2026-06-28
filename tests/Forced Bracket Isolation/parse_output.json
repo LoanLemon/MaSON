@@ -1,0 +1,9 @@
+{
+  "ServerSettings": {
+    "port": 3000,
+    "Backups": [
+      "BackupNode1",
+      "BackupNode2"
+    ]
+  }
+}
