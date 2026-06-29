@@ -40,7 +40,7 @@ MaSON fits a specific niche: **human-authored hierarchical documents where visua
 - **Zero-Bracket Nesting:** Structure child objects implicitly via standard Markdown headings (`#`, `##`, `###`).
 - **Natural Array Triggers:** Bulleted lists (`*`, `-`, `+`) automatically morph parent containers into ordered arrays.
 - **Implicit Type Inference:** Native detection of numbers, floats, booleans (`true`/`false`), and `null` values without tedious string conversions.
-- **Grounded Token Efficiency:** In nested configuration files and content-rich documents, MaSON can reduce raw characters compared to equivalent JSON by eliminating repeated brackets, braces, and quotation marks. This is especially useful in LLM workflows, where concise representations can help maximize available context and minimize token overhead.
+- **Grounded Token Efficiency:** In nested configuration files and content-rich documents, MaSON can reduce raw characters compared to equivalent JSON by eliminating repeated brackets, braces, and quotation marks. A dedicated **Compact Mode** further maximizes efficiency for LLM pipelines by stripping unnecessary whitespace and condensing array structures into compact tuples, significantly reducing token overhead.
 - **Bi-directional Integrity:** Safely stringifies standard JavaScript objects back to MaSON, complete with sorted parameters and clean spacing.
 
 ---
@@ -112,18 +112,28 @@ console.log(data);
 */
 ```
 
-### 3. Stringify back to MaSON
+### 3. Stringify back to MaSON (Clean & Compact Modes)
+
+MaSON's stringifier allows you to convert standard JSON objects back into MaSON markdown format. It supports two formatting modes:
+* **Clean Mode (`{ compact: false }`)**: Optimized for human readability, inserting blank lines between properties and collections, and maintaining explicit property keys for array elements.
+* **Compact Mode (`{ compact: true }`)**: Minimizes token usage for LLM pipelines, stripping empty lines, spacing, and collapsing array-of-objects into dense tuple structures (e.g. `# users[name,age]`).
+
 ```typescript
 import { stringify } from 'mason-parser';
 
 const config = {
   appName: "TestApp",
   active: true,
-  nodes: [101, 102]
+  nodes: [101, 102],
+  users: [
+    { name: "Alice", age: 30 },
+    { name: "Bob", age: 25 }
+  ]
 };
 
-const msonString = stringify(config);
-console.log(msonString);
+// 1. Clean Mode (Default for readability)
+const cleanMson = stringify(config, 0, undefined, { compact: false });
+console.log(cleanMson);
 /*
 appName: TestApp
 active: true
@@ -131,6 +141,31 @@ active: true
 # nodes
 * 101
 * 102
+
+# users[]
+## User
+name: Alice
+age: 30
+
+## User
+name: Bob
+age: 25
+*/
+
+// 2. Compact Mode (Optimized for token-efficiency)
+const compactMson = stringify(config, 0, undefined, { compact: true });
+console.log(compactMson);
+/*
+appName:TestApp
+active:true
+#nodes(101,102)
+#users[name,age]
+##
+Alice
+30
+##
+Bob
+25
 */
 ```
 

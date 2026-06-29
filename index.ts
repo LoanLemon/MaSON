@@ -110,7 +110,8 @@ export function parsePrimitiveValue(val: string): any {
     }
   }
 
-  return val;
+  // Unescape literal \n back to newlines for compact mode strings
+  return val.replace(/\\n/g, '\n');
 }
 
 /**
@@ -218,30 +219,85 @@ export function parseValueWithMultiline(initialValStr: string, lines: string[], 
   return { value: parsePrimitiveValue(valStr), nextLineIndex };
 }
 
+function splitCompactValues(inside: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inBackticks = false;
+  let backtickCount = 0;
+  
+  for (let i = 0; i < inside.length; i++) {
+    const char = inside[i];
+    
+    if (char === '`') {
+      let j = i;
+      while (j < inside.length && inside[j] === '`') {
+        j++;
+      }
+      const count = j - i;
+      
+      if (!inBackticks) {
+        inBackticks = true;
+        backtickCount = count;
+      } else if (count === backtickCount) {
+        inBackticks = false;
+        backtickCount = 0;
+      }
+      current += inside.substring(i, j);
+      i = j - 1;
+    } else if (char === ',' && !inBackticks) {
+      result.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  
+  result.push(current);
+  return result;
+}
+
 /**
  * Formats a value for MSON stringification.
  * Wraps in quotes if it has special characters or looks like a keyword but is a string.
  */
-export function stringifyPrimitiveValue(val: any): string {
+export function stringifyPrimitiveValue(val: any, options: { compact?: boolean, inCompactArray?: boolean } = {}): string {
+  const isCompact = options.compact !== false;
   if (val === null) return 'null';
   if (typeof val === 'boolean') return val ? 'true' : 'false';
   if (typeof val === 'number') return String(val);
 
-  const str = String(val);
+  let str = String(val);
 
-  if (str.includes('\n')) {
+  if (options.inCompactArray && str.includes(',')) {
     let maxConsecutive = 0;
     let match;
-    // Reset regex state since it's global
     BACKTICK_REGEX.lastIndex = 0;
     while ((match = BACKTICK_REGEX.exec(str)) !== null) {
       if (match[0].length > maxConsecutive) {
         maxConsecutive = match[0].length;
       }
     }
-    const wrapCount = maxConsecutive + 1;
-    const wrapSeq = '`'.repeat(wrapCount);
-    return `${wrapSeq}\n${str}\n${wrapSeq}`;
+    const wrapCount = Math.max(1, maxConsecutive + 1);
+    const tick = '`'.repeat(wrapCount);
+    return `${tick}${str}${tick}`;
+  }
+
+  if (str.includes('\n')) {
+    if (isCompact) {
+      str = str.replace(/\n/g, '\\n');
+    } else {
+      let maxConsecutive = 0;
+      let match;
+      BACKTICK_REGEX.lastIndex = 0;
+      while ((match = BACKTICK_REGEX.exec(str)) !== null) {
+        if (match[0].length > maxConsecutive) {
+          maxConsecutive = match[0].length;
+        }
+      }
+      const wrapCount = maxConsecutive + 1;
+      const wrapSeq = '`'.repeat(wrapCount);
+      return `${wrapSeq}\n${str}\n${wrapSeq}`;
+    }
   }
 
   if (str.includes('`')) {
@@ -285,9 +341,11 @@ export function parse(text: string, options?: ParseOptions): any {
  */
 export function fastParseWithTrace(text: string): ParseResult {
   const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  const lines = text.split(/\r?\n/);
+  text = text.replace(/\r\n/g, '\n').replace(/\n\r/g, '\n').replace(/\r/g, '\n');
+  const lines = text.split('\n');
   let root: any = {};
   let rootConvertedToArray = false;
+  let rootCompactMap: string[] | undefined = undefined;
 
   interface FastStackItem {
     level: number;
@@ -297,6 +355,8 @@ export function fastParseWithTrace(text: string): ParseResult {
     type: 'object' | 'array';
     isExplicitArray?: boolean;
     forcedBracketType?: 'array' | 'object' | null;
+    compactMap?: string[];
+    compactIndex?: number;
   }
 
   const stack: FastStackItem[] = [];
@@ -352,7 +412,7 @@ export function fastParseWithTrace(text: string): ParseResult {
     const trimmedLen = endIdx - startIdx + 1;
 
     // Top-level array trigger
-    if (trimmedLen === 2 && rawLine.charCodeAt(startIdx) === 91 /* '[' */ && rawLine.charCodeAt(startIdx + 1) === 93 /* ']' */) {
+    if (trimmedLen >= 2 && rawLine.charCodeAt(startIdx) === 91 /* '[' */ && rawLine.charCodeAt(endIdx) === 93 /* ']' */) {
       let isRootEmpty = false;
       if (Array.isArray(root)) {
         isRootEmpty = root.length === 0;
@@ -367,6 +427,11 @@ export function fastParseWithTrace(text: string): ParseResult {
       if (stack.length === 0 && !rootConvertedToArray && isRootEmpty) {
         root = [];
         rootConvertedToArray = true;
+        
+        let inside = rawLine.slice(startIdx + 1, endIdx).trim();
+        if (inside.length > 0) {
+          rootCompactMap = inside.split(',').map(s => s.trim());
+        }
         continue;
       }
     }
@@ -391,21 +456,85 @@ export function fastParseWithTrace(text: string): ParseResult {
       let actualHeadingName = '';
       let isExplicitArray = false;
       let forcedBracketType: 'array' | 'object' | null = null;
+      let compactMap: string[] | undefined = undefined;
+      let isCompactPrimitiveArray = false;
+      let primitiveArrayValues: any[] = [];
 
       if (hStart <= endIdx) {
         const lastChar = rawLine.charCodeAt(endIdx);
-        if (endIdx - hStart >= 1 && rawLine.charCodeAt(endIdx - 1) === 91 /* '[' */ && lastChar === 93 /* ']' */) {
-          isExplicitArray = true;
-          let hEnd = endIdx - 2;
-          while (hEnd >= hStart) {
-            const code = rawLine.charCodeAt(hEnd);
-            if (code === 32 || code === 9) {
-              hEnd--;
-            } else {
+        if (lastChar === 41 /* ')' */) {
+          let openParen = -1;
+          for (let k = endIdx - 1; k >= hStart; k--) {
+            if (rawLine.charCodeAt(k) === 40 /* '(' */) {
+              openParen = k;
               break;
             }
           }
-          actualHeadingName = hStart <= hEnd ? rawLine.slice(hStart, hEnd + 1) : '';
+          if (openParen !== -1) {
+            isCompactPrimitiveArray = true;
+            let inside = rawLine.slice(openParen + 1, endIdx).trim();
+            if (inside.length > 0) {
+              primitiveArrayValues = splitCompactValues(inside).map(s => parsePrimitiveValue(s.trim()));
+            }
+            let hEnd = openParen - 1;
+            while (hEnd >= hStart) {
+              const code = rawLine.charCodeAt(hEnd);
+              if (code === 32 || code === 9) {
+                hEnd--;
+              } else {
+                break;
+              }
+            }
+            actualHeadingName = hStart <= hEnd ? rawLine.slice(hStart, hEnd + 1) : '';
+          } else {
+            actualHeadingName = rawLine.slice(hStart, endIdx + 1);
+          }
+        } else if (lastChar === 93 /* ']' */) {
+          let openBracket = -1;
+          for (let k = endIdx - 1; k >= hStart; k--) {
+            if (rawLine.charCodeAt(k) === 91 /* '[' */) {
+              openBracket = k;
+              break;
+            }
+          }
+          if (openBracket !== -1) {
+            isExplicitArray = true;
+            let inside = rawLine.slice(openBracket + 1, endIdx).trim();
+            if (inside.length > 0) {
+              compactMap = inside.split(',').map(s => s.trim());
+            }
+            let hEnd = openBracket - 1;
+            while (hEnd >= hStart) {
+              const code = rawLine.charCodeAt(hEnd);
+              if (code === 32 || code === 9) {
+                hEnd--;
+              } else {
+                break;
+              }
+            }
+            actualHeadingName = hStart <= hEnd ? rawLine.slice(hStart, hEnd + 1) : '';
+            
+            // Check if actualHeadingName ends with (...) which indicates primitive array values for a mixed array
+            let actualNameLength = actualHeadingName.length;
+            if (actualNameLength > 0 && actualHeadingName.charCodeAt(actualNameLength - 1) === 41 /* ')' */) {
+              let openParen = -1;
+              for (let k = actualNameLength - 2; k >= 0; k--) {
+                if (actualHeadingName.charCodeAt(k) === 40 /* '(' */) {
+                  openParen = k;
+                  break;
+                }
+              }
+              if (openParen !== -1) {
+                let insideParen = actualHeadingName.slice(openParen + 1, actualNameLength - 1).trim();
+                if (insideParen.length > 0) {
+                  primitiveArrayValues = splitCompactValues(insideParen).map(s => parsePrimitiveValue(s.trim()));
+                }
+                actualHeadingName = actualHeadingName.slice(0, openParen).trim();
+              }
+            }
+          } else {
+            actualHeadingName = rawLine.slice(hStart, endIdx + 1);
+          }
         } else if (lastChar === 91 /* '[' */) {
           isExplicitArray = true;
           forcedBracketType = 'array';
@@ -443,9 +572,11 @@ export function fastParseWithTrace(text: string): ParseResult {
 
       let activeParent: any = root;
       let activeParentItem: FastStackItem | null = null;
+      let activeCompactMap: string[] | undefined = rootCompactMap;
       if (stack.length > 0) {
         activeParentItem = stack[stack.length - 1];
         activeParent = activeParentItem.value;
+        activeCompactMap = activeParentItem.compactMap;
       }
 
       if (!actualHeadingName) {
@@ -456,7 +587,7 @@ export function fastParseWithTrace(text: string): ParseResult {
         }
       }
 
-      const newNode: any = isExplicitArray ? [] : {};
+      const newNode: any = primitiveArrayValues.length > 0 ? primitiveArrayValues : (isExplicitArray ? [] : {});
 
       if (activeParentItem && activeParentItem.isExplicitArray) {
         activeParent.push(newNode);
@@ -470,6 +601,10 @@ export function fastParseWithTrace(text: string): ParseResult {
         activeParent[actualHeadingName] = newNode;
       }
 
+      if (isCompactPrimitiveArray && !isExplicitArray) {
+        continue;
+      }
+
       stack.push({
         level: hashCount,
         key: actualHeadingName,
@@ -477,7 +612,9 @@ export function fastParseWithTrace(text: string): ParseResult {
         value: newNode,
         type: isExplicitArray ? 'array' : 'object',
         isExplicitArray,
-        forcedBracketType
+        forcedBracketType,
+        compactMap: compactMap || activeCompactMap,
+        compactIndex: 0
       });
 
       continue;
@@ -642,6 +779,40 @@ export function fastParseWithTrace(text: string): ParseResult {
       }
       continue;
     }
+
+    // 4. Compact Array Value or Unknown line
+    const activeItemForValue = stack[stack.length - 1];
+    if (activeItemForValue && activeItemForValue.compactMap) {
+      let valStr = rawLine.slice(startIdx, endIdx + 1);
+      let shouldPopActive = false;
+      if (activeItemForValue.forcedBracketType === 'array' && valStr.endsWith(']')) {
+        valStr = valStr.slice(0, -1).trim();
+        shouldPopActive = true;
+      } else if (activeItemForValue.forcedBracketType === 'object' && valStr.endsWith('}')) {
+        valStr = valStr.slice(0, -1).trim();
+        shouldPopActive = true;
+      }
+
+      let parsedVal: any;
+      if (valStr.charCodeAt(0) === 96 /* '`' */) {
+        const multiline = parseValueWithMultiline(valStr, lines, i);
+        parsedVal = multiline.value;
+        i = multiline.nextLineIndex;
+      } else {
+        parsedVal = parsePrimitiveValue(valStr);
+      }
+      
+      const key = activeItemForValue.compactMap[activeItemForValue.compactIndex || 0];
+      if (key) {
+        activeItemForValue.value[key] = parsedVal;
+        activeItemForValue.compactIndex = (activeItemForValue.compactIndex || 0) + 1;
+      }
+
+      if (shouldPopActive) {
+        stack.pop();
+      }
+      continue;
+    }
   }
 
   const duration = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startTime;
@@ -669,12 +840,14 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
   }
 
   const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  const lines = text.split(/\r?\n/);
+  text = text.replace(/\r\n/g, '\n').replace(/\n\r/g, '\n').replace(/\r/g, '\n');
+  const lines = text.split('\n');
   const trace: ParserTraceStep[] = [];
   const noTrace = options?.noTrace ?? false;
   
   let root: any = {};
   let rootConvertedToArray = false;
+  let rootCompactMap: string[] | undefined = undefined;
   
   // Stack structure: holds metadata of active parent headers
   interface StackItem {
@@ -685,6 +858,8 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
     type: 'object' | 'array';
     isExplicitArray?: boolean;
     forcedBracketType?: 'array' | 'object' | null;
+    compactMap?: string[];
+    compactIndex?: number;
   }
   
   const stack: StackItem[] = [];
@@ -776,7 +951,7 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
     const trimmedLen = endIdx - startIdx + 1;
 
     // Top-level array trigger
-    if (trimmedLen === 2 && rawLine.charCodeAt(startIdx) === 91 /* '[' */ && rawLine.charCodeAt(startIdx + 1) === 93 /* ']' */) {
+    if (trimmedLen >= 2 && rawLine.charCodeAt(startIdx) === 91 /* '[' */ && rawLine.charCodeAt(endIdx) === 93 /* ']' */) {
       let isRootEmpty = false;
       if (Array.isArray(root)) {
         isRootEmpty = root.length === 0;
@@ -791,11 +966,17 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
       if (stack.length === 0 && !rootConvertedToArray && isRootEmpty) {
         root = [];
         rootConvertedToArray = true;
+        
+        let inside = rawLine.slice(startIdx + 1, endIdx).trim();
+        if (inside.length > 0) {
+          rootCompactMap = inside.split(',').map(s => s.trim());
+        }
+
         if (!noTrace) {
           trace.push({
             lineNumber,
             lineText: rawLine,
-            action: 'Converted root container to an Array via top-level "[]"',
+            action: rootCompactMap ? `Converted root to Array with compact map [${rootCompactMap.join(',')}]` : 'Converted root container to an Array via top-level "[]"',
             stackDepth: stack.length,
             currentStack: getStackNames(),
             status: 'success'
@@ -833,17 +1014,73 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
       // Determine active parent container
       let activeParent: any = root;
       let activeParentItem: StackItem | null = null;
+      let activeCompactMap: string[] | undefined = rootCompactMap;
       if (stack.length > 0) {
         activeParentItem = stack[stack.length - 1];
         activeParent = activeParentItem.value;
+        activeCompactMap = activeParentItem.compactMap;
       }
 
       let actualHeadingName = headingName;
       let isExplicitArray = false;
       let forcedBracketType: 'array' | 'object' | null = null;
-      if (headingName.endsWith('[]')) {
-        actualHeadingName = headingName.slice(0, -2).trim();
-        isExplicitArray = true;
+      let compactMap: string[] | undefined = undefined;
+      let isCompactPrimitiveArray = false;
+      let primitiveArrayValues: any[] = [];
+
+      if (headingName.endsWith(')')) {
+        let openParen = -1;
+        for (let k = headingName.length - 2; k >= 0; k--) {
+          if (headingName.charCodeAt(k) === 40 /* '(' */) {
+            openParen = k;
+            break;
+          }
+        }
+        if (openParen !== -1) {
+          isCompactPrimitiveArray = true;
+          let inside = headingName.slice(openParen + 1, -1).trim();
+          if (inside.length > 0) {
+            primitiveArrayValues = splitCompactValues(inside).map(s => parsePrimitiveValue(s.trim()));
+          }
+          actualHeadingName = headingName.slice(0, openParen).trim();
+        }
+      } else if (headingName.endsWith(']')) {
+        let openBracket = -1;
+        for (let k = headingName.length - 2; k >= 0; k--) {
+          if (headingName.charCodeAt(k) === 91 /* '[' */) {
+            openBracket = k;
+            break;
+          }
+        }
+          if (openBracket !== -1) {
+          isExplicitArray = true;
+          let inside = headingName.slice(openBracket + 1, -1).trim();
+          if (inside.length > 0) {
+            compactMap = inside.split(',').map(s => s.trim());
+          }
+          actualHeadingName = headingName.slice(0, openBracket).trim();
+          
+          let actualNameLength = actualHeadingName.length;
+          if (actualNameLength > 0 && actualHeadingName.charCodeAt(actualNameLength - 1) === 41 /* ')' */) {
+            let openParen = -1;
+            for (let k = actualNameLength - 2; k >= 0; k--) {
+              if (actualHeadingName.charCodeAt(k) === 40 /* '(' */) {
+                openParen = k;
+                break;
+              }
+            }
+            if (openParen !== -1) {
+              let insideParen = actualHeadingName.slice(openParen + 1, actualNameLength - 1).trim();
+              if (insideParen.length > 0) {
+                primitiveArrayValues = splitCompactValues(insideParen).map(s => parsePrimitiveValue(s.trim()));
+              }
+              actualHeadingName = actualHeadingName.slice(0, openParen).trim();
+            }
+          }
+        } else {
+          // fallback
+          actualHeadingName = headingName;
+        }
       } else if (headingName.endsWith('[')) {
         actualHeadingName = headingName.slice(0, -1).trim();
         isExplicitArray = true;
@@ -873,7 +1110,7 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
       }
 
       // Create new child node
-      const newNode: any = isExplicitArray ? [] : {};
+      const newNode: any = primitiveArrayValues.length > 0 ? primitiveArrayValues : (isExplicitArray ? [] : {});
       
       // If parent is an explicit array of objects, we push straight into it
       if (activeParentItem && activeParentItem.isExplicitArray) {
@@ -928,6 +1165,20 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
         }
       }
 
+      if (isCompactPrimitiveArray && !isExplicitArray) {
+        if (!noTrace) {
+          trace.push({
+            lineNumber,
+            lineText: rawLine,
+            action: `Created compact primitive array for "${actualHeadingName}" at level ${hashCount}`,
+            stackDepth: stack.length,
+            currentStack: getStackNames(),
+            status: 'success'
+          });
+        }
+        continue;
+      }
+
       // Push new container to the stack
       stack.push({
         level: hashCount,
@@ -936,7 +1187,9 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
         value: newNode,
         type: isExplicitArray ? 'array' : 'object',
         isExplicitArray,
-        forcedBracketType
+        forcedBracketType,
+        compactMap: compactMap || activeCompactMap,
+        compactIndex: 0
       });
 
       continue;
@@ -1224,6 +1477,54 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
       continue;
     }
 
+    // 4. Compact Array Value or Unknown line
+    const activeItemForValue = stack[stack.length - 1];
+    if (activeItemForValue && activeItemForValue.compactMap) {
+      let valStr = rawLine.slice(startIdx, endIdx + 1);
+      let shouldPopActive = false;
+      if (activeItemForValue.forcedBracketType === 'array' && valStr.endsWith(']')) {
+        valStr = valStr.slice(0, -1).trim();
+        shouldPopActive = true;
+      } else if (activeItemForValue.forcedBracketType === 'object' && valStr.endsWith('}')) {
+        valStr = valStr.slice(0, -1).trim();
+        shouldPopActive = true;
+      }
+
+      const { value: parsedVal, nextLineIndex } = parseValueWithMultiline(valStr, lines, i);
+      i = nextLineIndex;
+
+      const key = activeItemForValue.compactMap[activeItemForValue.compactIndex || 0];
+      if (key) {
+        activeItemForValue.value[key] = parsedVal;
+        activeItemForValue.compactIndex = (activeItemForValue.compactIndex || 0) + 1;
+        if (!noTrace) {
+          trace.push({
+            lineNumber,
+            lineText: rawLine,
+            action: `Set key "${key}" to "${parsedVal}" in compact array item "${activeItemForValue.key}"`,
+            stackDepth: stack.length,
+            currentStack: getStackNames(),
+            status: 'success'
+          });
+        }
+      }
+
+      if (shouldPopActive) {
+        const popped = stack.pop();
+        if (!noTrace && popped) {
+          trace.push({
+            lineNumber,
+            lineText: rawLine,
+            action: `Closed forced bracket and popped "${popped.key}" from stack`,
+            stackDepth: stack.length,
+            currentStack: getStackNames(),
+            status: 'success'
+          });
+        }
+      }
+      continue;
+    }
+
     // Unknown lines
     if (!noTrace) {
       trace.push({
@@ -1273,19 +1574,44 @@ export function parseWithTrace(text: string, options?: ParseOptions): ParseResul
 /**
  * Stringifies a JavaScript object/array back into MSON text recursively.
  */
-export function stringify(obj: any, level: number = 0, parentKey?: string): string {
+export function stringify(obj: any, level: number = 0, parentKey?: string, options: { compact?: boolean } = {}): string {
+  const isCompactMode = options.compact !== false;
   if (obj === null || obj === undefined) return '';
 
   let output = '';
 
-  // Helper to repeat hashes for header level
-  const hashes = (lvl: number) => '#'.repeat(lvl);
+  const hashes = (lvl: number) => '#'.repeat(lvl === 0 ? 1 : lvl);
 
   if (Array.isArray(obj)) {
     if (level === 0) {
-      output += '[]\n\n';
+      if (isCompactMode) {
+        const allObjects = obj.length > 0 && obj.every(item => typeof item === 'object' && item !== null && !Array.isArray(item));
+        if (allObjects) {
+          const keySet = new Set<string>();
+          obj.forEach(item => Object.keys(item).forEach(k => keySet.add(k)));
+          const compactKeys = Array.from(keySet);
+          if (!compactKeys.some(k => k.includes(','))) {
+            output += `[${compactKeys.join(',')}]\n`;
+            if (!isCompactMode) output += '\n';
+            for (const item of obj) {
+              output += `##\n`;
+              for (const ck of compactKeys) {
+                const cv = item[ck];
+                if (cv === undefined) {
+                  output += `null\n`;
+                } else {
+                  output += `${stringifyPrimitiveValue(cv, options)}\n`;
+                }
+              }
+            }
+            return output.trim() + '\n';
+          }
+        }
+      }
+      output += '[]\n';
+      if (!isCompactMode) output += '\n';
     }
-    // Determine a singular name for items if possible
+    
     let itemName = 'Item';
     if (parentKey) {
       if (parentKey.endsWith('ies')) {
@@ -1295,64 +1621,129 @@ export function stringify(obj: any, level: number = 0, parentKey?: string): stri
       } else {
         itemName = parentKey;
       }
-      // Capitalize first letter
       itemName = itemName.charAt(0).toUpperCase() + itemName.slice(1);
     }
 
-    // Sort items so that primitive/scalars come first, and objects/arrays come last (to the bottom)
     const primitives = obj.filter(item => typeof item !== 'object' || item === null);
     const complex = obj.filter(item => typeof item === 'object' && item !== null);
     const sortedItems = [...primitives, ...complex];
 
-    // If it's an array of items, we represent them as bullets or subheadings
-    for (const item of sortedItems) {
+    for (let i = 0; i < sortedItems.length; i++) {
+      const item = sortedItems[i];
       if (typeof item === 'object' && item !== null) {
         const nextLevel = level + 1;
         const headingSuffix = Array.isArray(item) ? '[]' : '';
-        output += `${hashes(nextLevel)} ${itemName}${headingSuffix}\n`;
-        const nestedString = stringify(item, nextLevel);
+        const headerSpace = isCompactMode ? '' : ' ';
+        const finalItemName = isCompactMode ? '' : itemName;
+        
+        if (!isCompactMode && i > 0 && (typeof sortedItems[i - 1] !== 'object' || sortedItems[i - 1] === null)) {
+          output += '\n';
+        }
+        
+        output += `${hashes(nextLevel)}${headerSpace}${finalItemName}${headingSuffix}\n`;
+        const nestedString = stringify(item, nextLevel, undefined, options);
         if (nestedString) {
           output += nestedString;
         }
-        output += '\n'; // Clean spacer
+        if (!isCompactMode && i < sortedItems.length - 1) output += '\n';
       } else {
-        output += `* ${stringifyPrimitiveValue(item)}\n`;
+        output += `* ${stringifyPrimitiveValue(item, options)}\n`;
       }
     }
   } else if (typeof obj === 'object') {
     const keys = Object.keys(obj);
     
-    // Sort keys to put primitives first, then nested objects/arrays for visual organization
     const primitives = keys.filter(k => typeof obj[k] !== 'object' || obj[k] === null);
     const complex = keys.filter(k => typeof obj[k] === 'object' && obj[k] !== null);
 
-    // Primitives first under the current heading level
     for (const key of primitives) {
-      output += `${key}: ${stringifyPrimitiveValue(obj[key])}\n`;
+      const kvSpace = isCompactMode ? '' : ' ';
+      output += `${key}:${kvSpace}${stringifyPrimitiveValue(obj[key], options)}\n`;
     }
 
     if (primitives.length > 0 && complex.length > 0) {
-      output += '\n'; // Add clean spacing between block types
+      if (!isCompactMode) {
+        output += '\n';
+      }
     }
 
-    // Complex nested objects/arrays
-    for (const key of complex) {
+    for (let i = 0; i < complex.length; i++) {
+      const key = complex[i];
       const nextLevel = level + 1;
       const val = obj[key];
       const isArrayOfObjects = Array.isArray(val) && val.some(item => typeof item === 'object' && item !== null);
-      const headingNameSuffix = isArrayOfObjects ? '[]' : '';
-
-      output += `${hashes(nextLevel)} ${key}${headingNameSuffix}\n`;
       
-      const nestedString = stringify(val, nextLevel, key);
-      if (nestedString) {
-        output += nestedString;
+      let isCompact = false;
+      let compactKeys: string[] = [];
+      let isCompactPrimitiveArray = false;
+
+      if (isCompactMode && Array.isArray(val)) {
+        const allObjects = val.length > 0 && val.every(item => typeof item === 'object' && item !== null && !Array.isArray(item));
+        const allPrimitives = val.length > 0 && val.every(item => typeof item !== 'object' || item === null);
+        
+        if (allObjects) {
+          const keySet = new Set<string>();
+          val.forEach(item => Object.keys(item).forEach(k => keySet.add(k)));
+          compactKeys = Array.from(keySet);
+          if (!compactKeys.some(k => k.includes(','))) {
+            isCompact = true;
+          }
+        } else if (allPrimitives) {
+          const hasCommas = val.some(item => typeof item === 'string' && item.includes(','));
+          // if (!hasCommas) { // Removed as per prompt rules to allow commas inside ()
+            isCompactPrimitiveArray = true;
+          // }
+        }
       }
-      output += '\n'; // Clean spacer
+
+      if (isCompactPrimitiveArray) {
+        const headerSpace = isCompactMode ? '' : ' ';
+        const prims = val.map((item: any) => stringifyPrimitiveValue(item, { ...options, inCompactArray: true })).join(',');
+        output += `${hashes(nextLevel)}${headerSpace}${key}(${prims})\n`;
+        if (!isCompactMode) output += '\n';
+      } else if (isCompact) {
+        const headerSpace = isCompactMode ? '' : ' ';
+        output += `${hashes(nextLevel)}${headerSpace}${key}[${compactKeys.join(',')}]\n`;
+        for (const item of val) {
+          output += `${hashes(nextLevel + 1)}\n`;
+          for (const ck of compactKeys) {
+            const cv = item[ck];
+            if (cv === undefined) {
+              output += `null\n`;
+            } else {
+              output += `${stringifyPrimitiveValue(cv, options)}\n`;
+            }
+          }
+        }
+        if (!isCompactMode && i < complex.length - 1) output += '\n';
+      } else {
+        const headerSpace = isCompactMode ? '' : ' ';
+        let headingNameSuffix = isArrayOfObjects ? '[]' : '';
+        let valToPass = val;
+
+        if (isCompactMode && Array.isArray(val)) {
+          const hasObjects = val.some(item => typeof item === 'object' && item !== null);
+          if (hasObjects) {
+            const mixedPrimitives = val.filter(item => typeof item !== 'object' || item === null);
+            if (mixedPrimitives.length > 0) {
+              const primsStr = mixedPrimitives.map((item: any) => stringifyPrimitiveValue(item, { ...options, inCompactArray: true })).join(',');
+              headingNameSuffix = `(${primsStr})[]`;
+              valToPass = val.filter(item => typeof item === 'object' && item !== null);
+            }
+          }
+        }
+
+        output += `${hashes(nextLevel)}${headerSpace}${key}${headingNameSuffix}\n`;
+        
+        const nestedString = stringify(valToPass, nextLevel, key, options);
+        if (nestedString) {
+          output += nestedString;
+        }
+        if (!isCompactMode && i < complex.length - 1) output += '\n';
+      }
     }
   }
 
-  // Clean trailing empty lines but preserve structure
   return output.trim() + '\n';
 }
 

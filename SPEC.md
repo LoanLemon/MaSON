@@ -12,7 +12,7 @@ The grammar below defines the syntax of MaSON in **Extended Backus–Naur Form (
 document             = [ top_level_array | root_properties ] ;
 
 (* Structural Core *)
-top_level_array      = "[]" , newline , { newline } , [ array_elements ] ;
+top_level_array      = "[" , [ property_list ] , "]" , newline , { newline } , [ array_elements ] ;
 root_properties      = { property_line | comment_line | newline } , [ heading_hierarchy ] ;
 
 heading_hierarchy    = heading_line , { heading_content | heading_hierarchy } ;
@@ -30,10 +30,13 @@ bullet_char          = "*" | "-" | "+" ;
 spaces               = { " " | "\t" } ;
 newline              = "\r\n" | "\n" ;
 
-heading_label        = [ explicit_array_label | forced_array_label | forced_object_label | literal_label ] ;
+heading_label        = [ explicit_array_label | forced_array_label | forced_object_label | compact_array_label | literal_label ] ;
 explicit_array_label = literal_label , "[]" ;
 forced_array_label   = literal_label , "[" ;
 forced_object_label  = literal_label , "{" ;
+compact_array_label  = literal_label , [ "(" , primitive_list , ")" ] , [ "[" , property_list , "]" ] ;
+primitive_list       = primitive_value , { "," , primitive_value } ;
+property_list        = key , { "," , key } ;
 literal_label        = { any_character_except_brackets_or_hash } ;
 
 key                  = { any_character_except_colon_or_spaces } ;
@@ -71,6 +74,10 @@ unquoted_string      = { any_character_except_newline_and_trailing_spaces } ;
    - If the container already has property keys, the bullet value is instead pushed into an implicit `_items` key in that object to protect properties from silent deletion.
 6. **Explicit Array Suffix**: If a heading terminates with `[]` (e.g. `# Users[]`), it is instantly initialized as an array. Nested headings below it push new objects into this array container.
 7. **Forced Brackets**: Suffixes `[` and `{` on headings explicitly override the parsed container type to be an array or object, respectively, until a matching closing bracket (`]` or `}`) is encountered on a line by itself or at the end of a value. This isolates deeply nested structures in complex mixed-type lists.
+8. **Compact Mode Arrays**: To minimize overhead, MaSON supports inline arrays and property mappings on headings:
+   - **Primitive Lists**: A heading ending in `(val1, val2)` pushes those primitive values into the array.
+   - **Property Maps**: A heading ending in `[key1, key2]` (with or without `()`) maps subsequent nested child entries as objects with those positional keys, skipping the need to repeat keys for each array item.
+   - **Top-Level Maps**: The top-level document can begin with `[key1, key2]` to apply the property map to root array entries.
 
 ### Stringification Rules
 - **Primitives**: Write booleans, null, and compliant numbers as-is. Wrap strings with quotes if they resemble boolean/null literals, contain a colon `:`, are empty, or contain outer spaces.
@@ -168,6 +175,41 @@ message: DB latency high
       {
         "level": "WARNING",
         "message": "DB latency high"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### Example 4: Compact Mode Arrays
+Compact mode utilizes parenthetical primitive lists and bracketed property mappings on headers to drastically reduce the number of tokens required to encode repetitive objects or simple primitives.
+
+#### MaSON
+```markdown
+# MixedDataset
+## PayloadMixedList(42, "100", false, null, 2026-06-27)[x, y, z]
+###
+1
+2
+33
+```
+
+#### JSON Representation
+```json
+{
+  "MixedDataset": {
+    "PayloadMixedList": [
+      42,
+      "100",
+      false,
+      null,
+      "2026-06-27",
+      {
+        "x": 1,
+        "y": 2,
+        "z": 33
       }
     ]
   }

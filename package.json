@@ -1,6 +1,6 @@
 {
   "name": "mason-parser",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "A lightweight, high-performance Markdown Structured Object Notation (MSON) parser and stringifier.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
